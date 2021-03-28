@@ -132,5 +132,6 @@ dmypy.json
 .idea/
 data/
 work/
-test_runs
+test_data/
+test_runs/
 .DS_Store

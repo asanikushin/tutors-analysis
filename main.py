@@ -59,7 +59,7 @@ AGGREGATE_CONFIG = dict(services=False, flatten=True)
 
 def get_url_data(url: str) -> (str, bool):
     headers = {
-        "User-Agent": "PostmanRuntime/7.26.10"
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:86.0) Gecko/20100101 Firefox/86.0"
     }
     res = requests.get(url, headers=headers)
     return res.text, res.status_code != 404
@@ -101,7 +101,7 @@ def fill_profile(data: dict) -> Profile:
     prof_id = dict_get(data, "appState/commonData/pxf/filters/models/ids/0/id")
     name = dict_get(data, f"appState/page/profiles/{prof_id}/fullName")
     gender = dict_get(data, f"appState/page/profiles/{prof_id}/gender")
-    rating: float = dict_get(data, "appState/page/data/stats/averageRating")
+    rating: float = float(dict_get(data, f"/appState/page/profiles/{prof_id}/newRank").replace(",", "."))
     reviews: int = dict_get(data, "appState/page/reviews/totalCount")
     reviews_count: int = dict_get(data, "/appState/page/data/stats/reviewCount")
     pos_reviews: int = dict_get(data, "/appState/page/data/stats/positiveReviewCount")
@@ -154,7 +154,9 @@ def process_web_page(page: int, page_url: str, base_url: str,
         print(f"page {page_url} not found")
         return 0, 0
     path = os.path.join(base_dir, PROFILES_DIR)
+    reviews = os.path.join(base_dir, REVIEWS_DIR)
     pathlib.Path(path).mkdir(parents=True, exist_ok=True)
+    pathlib.Path(reviews).mkdir(parents=True, exist_ok=True)
     soup = BeautifulSoup(profiles_data, "html.parser")
     links = soup.find_all("h2")
 
@@ -169,6 +171,9 @@ def process_web_page(page: int, page_url: str, base_url: str,
         try:
             profile_text, ok = get_url_data(base_url + link)
             save_data(profile_text, prof_id, path)
+
+            reviews_text, ok = get_url_data(base_url + link + "reviews/")
+            save_data(reviews_text, prof_id, reviews)
         except:
             fails_cnt += 1
 
@@ -235,23 +240,28 @@ def aggregate_main(pb_pages: tqdm.tqdm, counter: tqdm.tqdm):
     aggregate = os.path.join(DATA_DIR, "aggregate")
     pathlib.Path(aggregate).mkdir(parents=True, exist_ok=True)
     pbar = tqdm.tqdm(total=500, position=1)
-    for page in range(START, PAGES):
-        pbar.reset(total=500)
-        file = os.path.join(DATA_DIR, str(page), "data.csv")
-        with open(file, "r") as csv_file:
-            reader = csv.reader(csv_file, delimiter=",")
-            next(reader)
-            pbar.set_description(f"{page=}")
-            for line in reader:
-                profile = extract_profile(line)
-                for service in profile.services:
-                    service = service.lower().replace(" ", "_").replace("/", "_").replace(".", "_") + ".csv"
-                    with open(os.path.join(aggregate, service), "a") as result:
-                        writer = csv.writer(result, delimiter=",")
-                        writer.writerow(profile.to_list(**AGGREGATE_CONFIG))
-                counter.update(1)
-                pbar.update(1)
-        pb_pages.update(1)
+
+    with open(os.path.join(DATA_DIR, "full_data.csv"), "w") as full_data:
+        writer = csv.writer(full_data, delimiter=",")
+        writer.writerow(Profile.header(**RAW_CONFIG))
+        for page in range(START, PAGES):
+            pbar.reset(total=500)
+            file = os.path.join(DATA_DIR, str(page), "data.csv")
+            with open(file, "r") as csv_file:
+                reader = csv.reader(csv_file, delimiter=",")
+                next(reader)
+                pbar.set_description(f"{page=}")
+                for line in reader:
+                    profile = extract_profile(line)
+                    for service in profile.services:
+                        service = service.lower().replace(" ", "_").replace("/", "_").replace(".", "_") + ".csv"
+                        with open(os.path.join(aggregate, service), "a") as result:
+                            res_writer = csv.writer(result, delimiter=",")
+                            res_writer.writerow(profile.to_list(**AGGREGATE_CONFIG))
+                            writer.writerow(profile.to_list(**RAW_CONFIG))
+                    counter.update(1)
+                    pbar.update(1)
+            pb_pages.update(1)
     return
 
 
@@ -291,6 +301,7 @@ print(config)
 THREADS = config.treads
 
 PROFILES_DIR = "profiles"
+REVIEWS_DIR = "reviews"
 DATA_DIR = config.store
 
 PAGES = config.pages
