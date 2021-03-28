@@ -27,22 +27,34 @@ class Profile:
     trust: str
     url: str
 
-    def to_list(self, services=True) -> tuple:
+    def to_list(self, services=True, flatten=False) -> tuple:
         result = [self.prof_id, self.name, self.gender,
-                  self.rating, self.reviews, self.reviews_count, self.pos_reviews, self.marks]
+                  self.rating, self.reviews, self.reviews_count, self.pos_reviews]
+        if flatten:
+            result.extend(self.marks)
+        else:
+            result.append(self.marks)
         if services:
             result.append(self.services)
         result.extend([self.trust, self.url])
         return tuple(result)
 
     @staticmethod
-    def header(services=True) -> typing.Tuple[str, ...]:
+    def header(services=True, flatten=False) -> typing.Tuple[str, ...]:
         result = ["prof_id", "name", "gender",
-                  "rating", "reviews", "reviews_count", "pos_reviews", "marks"]
+                  "rating", "reviews", "reviews_count", "pos_reviews"]
+        if flatten:
+            result.extend(["m1", "m2", "m3", "m4", "m5"])
+        else:
+            result.append("marks")
         if services:
             result.append("services")
         result.extend(["trust", "url"])
         return tuple(result)
+
+
+RAW_CONFIG = dict(services=True, flatten=False)
+AGGREGATE_CONFIG = dict(services=False, flatten=True)
 
 
 def get_url_data(url: str) -> (str, bool):
@@ -174,7 +186,7 @@ def parse_main(start, end, skip=1, pos: int = 1, progress: tqdm.tqdm = None, cou
         with open(os.path.join(path, "fails.txt"), "w") as fails:
             with open(os.path.join(path, "data.csv"), "w") as csvfile:
                 writer = csv.writer(csvfile, delimiter=",")
-                writer.writerow(Profile.header())
+                writer.writerow(Profile.header(**RAW_CONFIG))
                 a, b = process_local_page(page, csvfile, fails, writer, path, pbar, counter)
                 done += a
                 fails_cnt += b
@@ -204,7 +216,7 @@ def process_local_page(page: int,
             data = get_app_data(profile_text)
             profile = fill_profile(data)
             if writer is not None:
-                writer.writerow(profile.to_list())
+                writer.writerow(profile.to_list(**RAW_CONFIG))
         except Exception as err:
             if fails is not None:
                 print(prof_id, file=fails)
@@ -233,14 +245,32 @@ def aggregate_main(pb_pages: tqdm.tqdm, counter: tqdm.tqdm):
             for line in reader:
                 profile = extract_profile(line)
                 for service in profile.services:
-                    service = service.lower().replace(" ", "_").replace("/", "") + ".csv"
+                    service = service.lower().replace(" ", "_").replace("/", "_").replace(".", "_") + ".csv"
                     with open(os.path.join(aggregate, service), "a") as result:
                         writer = csv.writer(result, delimiter=",")
-                        writer.writerow(profile.to_list(services=False))
+                        writer.writerow(profile.to_list(**AGGREGATE_CONFIG))
                 counter.update(1)
                 pbar.update(1)
         pb_pages.update(1)
     return
+
+
+def add_csv_header(file):
+    with open(file, "r") as content:
+        data = content.read()
+    with open(file, "w") as result:
+        writer = csv.writer(result, delimiter=",")
+        writer.writerow(Profile.header(**AGGREGATE_CONFIG))
+    with open(file, "a") as result:
+        result.write(data)
+    pass
+
+
+def add_headers_to_files(files, pbar: tqdm.tqdm = None):
+    for file in files:
+        add_csv_header(file)
+        if pbar:
+            pbar.update(1)
 
 
 def parse_args():
@@ -295,6 +325,15 @@ def start_parse(pages_pb, counter):
     wait_threads(threads)
 
 
+def start_aggregate(pages_pb, counter):
+    aggregate_main(pages_pb, counter)
+    storage = os.path.join(DATA_DIR, "aggregate")
+    print("add headers")
+    agg_files = os.listdir(storage)
+    add_headers_to_files(map(lambda x: os.path.join(storage, x), agg_files))
+    print("done")
+
+
 def main():
     pages_pb = tqdm.tqdm(total=PAGES, position=0, desc="Pages")
     counter = tqdm.tqdm(position=THREADS + 1, desc="Profiles")
@@ -310,7 +349,7 @@ def main():
         counter.clear()
 
     if "aggregate" in config.mode:
-        aggregate_main(pages_pb, counter)
+        start_aggregate(pages_pb, counter)
         pages_pb.clear()
         counter.clear()
 
