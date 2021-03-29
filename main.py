@@ -20,8 +20,6 @@ class Profile:
     gender: str
     rating: float
     reviews: int
-    reviews_count: int
-    pos_reviews: int
     marks: typing.List[int]
     services: typing.List[str]
     trust: str
@@ -29,7 +27,7 @@ class Profile:
 
     def to_list(self, services=True, flatten=False) -> tuple:
         result = [self.prof_id, self.name, self.gender,
-                  self.rating, self.reviews, self.reviews_count, self.pos_reviews]
+                  self.rating, self.reviews]
         if flatten:
             result.extend(self.marks)
         else:
@@ -42,7 +40,7 @@ class Profile:
     @staticmethod
     def header(services=True, flatten=False) -> typing.Tuple[str, ...]:
         result = ["prof_id", "name", "gender",
-                  "rating", "reviews", "reviews_count", "pos_reviews"]
+                  "rating", "reviews"]
         if flatten:
             result.extend(["m1", "m2", "m3", "m4", "m5"])
         else:
@@ -54,6 +52,7 @@ class Profile:
 
 
 RAW_CONFIG = dict(services=True, flatten=False)
+FULL_CONFIG = dict(services=True, flatten=True)
 AGGREGATE_CONFIG = dict(services=False, flatten=True)
 
 
@@ -101,10 +100,8 @@ def fill_profile(data: dict) -> Profile:
     prof_id = dict_get(data, "appState/commonData/pxf/filters/models/ids/0/id")
     name = dict_get(data, f"appState/page/profiles/{prof_id}/fullName")
     gender = dict_get(data, f"appState/page/profiles/{prof_id}/gender")
-    rating: float = float(dict_get(data, f"/appState/page/profiles/{prof_id}/newRank").replace(",", "."))
+    rating: float = float((dict_get(data, f"/appState/page/profiles/{prof_id}/newRank") or "0").replace(",", "."))
     reviews: int = dict_get(data, "appState/page/reviews/totalCount")
-    reviews_count: int = dict_get(data, "/appState/page/data/stats/reviewCount")
-    pos_reviews: int = dict_get(data, "/appState/page/data/stats/positiveReviewCount")
 
     services_data: list = dict_get(data, f"appState/page/profiles/{prof_id}/topServices")
     services = [service["name"] for service in services_data]
@@ -122,14 +119,14 @@ def fill_profile(data: dict) -> Profile:
 
     url = dict_get(data, "appState/commonData/meta/og/url")
     return Profile(prof_id, name, gender,
-                   rating, reviews, reviews_count, pos_reviews, marks,
+                   rating, reviews, marks,
                    services, trust, url)
 
 
 def extract_profile(line: typing.List[str]) -> Profile:
     return Profile(line[0], line[1], line[2],
-                   float(line[3]), int(line[4]), int(line[5]), int(line[6]), json.loads(line[7]),
-                   json.loads(line[8].replace("'", '"')), line[9], line[10])
+                   float(line[3]), int(line[4]), json.loads(line[5]),
+                   json.loads(line[6].replace("'", '"')), line[7], line[8])
 
 
 def spider_main(start, end, skip=1, pos: int = 1, progress: tqdm.tqdm = None, counter: tqdm.tqdm = None):
@@ -237,13 +234,13 @@ def process_local_page(page: int,
 
 
 def aggregate_main(pb_pages: tqdm.tqdm, counter: tqdm.tqdm):
-    aggregate = os.path.join(DATA_DIR, "aggregate")
+    aggregate = os.path.join(DATA_DIR, AGGREGATE)
     pathlib.Path(aggregate).mkdir(parents=True, exist_ok=True)
     pbar = tqdm.tqdm(total=500, position=1)
 
     with open(os.path.join(DATA_DIR, "full_data.csv"), "w") as full_data:
         writer = csv.writer(full_data, delimiter=",")
-        writer.writerow(Profile.header(**RAW_CONFIG))
+        writer.writerow(Profile.header(**FULL_CONFIG))
         for page in range(START, PAGES):
             pbar.reset(total=500)
             file = os.path.join(DATA_DIR, str(page), "data.csv")
@@ -258,7 +255,7 @@ def aggregate_main(pb_pages: tqdm.tqdm, counter: tqdm.tqdm):
                         with open(os.path.join(aggregate, service), "a") as result:
                             res_writer = csv.writer(result, delimiter=",")
                             res_writer.writerow(profile.to_list(**AGGREGATE_CONFIG))
-                            writer.writerow(profile.to_list(**RAW_CONFIG))
+                    writer.writerow(profile.to_list(**FULL_CONFIG))
                     counter.update(1)
                     pbar.update(1)
             pb_pages.update(1)
@@ -302,6 +299,7 @@ THREADS = config.treads
 
 PROFILES_DIR = "profiles"
 REVIEWS_DIR = "reviews"
+AGGREGATE = "aggregate"
 DATA_DIR = config.store
 
 PAGES = config.pages
@@ -338,7 +336,7 @@ def start_parse(pages_pb, counter):
 
 def start_aggregate(pages_pb, counter):
     aggregate_main(pages_pb, counter)
-    storage = os.path.join(DATA_DIR, "aggregate")
+    storage = os.path.join(DATA_DIR, AGGREGATE)
     print("add headers")
     agg_files = os.listdir(storage)
     add_headers_to_files(map(lambda x: os.path.join(storage, x), agg_files))
