@@ -151,9 +151,7 @@ def process_web_page(page: int, page_url: str, base_url: str,
         print(f"page {page_url} not found")
         return 0, 0
     path = os.path.join(base_dir, PROFILES_DIR)
-    reviews = os.path.join(base_dir, REVIEWS_DIR)
     pathlib.Path(path).mkdir(parents=True, exist_ok=True)
-    pathlib.Path(reviews).mkdir(parents=True, exist_ok=True)
     soup = BeautifulSoup(profiles_data, "html.parser")
     links = soup.find_all("h2")
 
@@ -168,9 +166,6 @@ def process_web_page(page: int, page_url: str, base_url: str,
         try:
             profile_text, ok = get_url_data(base_url + link)
             save_data(profile_text, prof_id, path)
-
-            reviews_text, ok = get_url_data(base_url + link + "reviews/")
-            save_data(reviews_text, prof_id, reviews)
         except:
             fails_cnt += 1
 
@@ -298,7 +293,6 @@ print(config)
 THREADS = config.treads
 
 PROFILES_DIR = "profiles"
-REVIEWS_DIR = "reviews"
 AGGREGATE = "aggregate"
 DATA_DIR = config.store
 
