@@ -11,6 +11,9 @@ import typing
 import requests
 from bs4 import BeautifulSoup
 import tqdm
+import pyodbc
+
+CNT = 0
 
 
 @dataclass
@@ -26,6 +29,7 @@ class Profile:
     url: str
 
     def to_list(self, services=True, flatten=False) -> tuple:
+        global CNT
         result = [self.prof_id, self.name, self.gender,
                   self.rating, self.reviews]
         if flatten:
@@ -35,7 +39,29 @@ class Profile:
         if services:
             result.append(self.services)
         result.extend([self.trust, self.url])
+        CNT = max(CNT, len(self.services))
         return tuple(result)
+
+    @staticmethod
+    def get_const_services(services, num):
+        return services[:num] + ["NULL"] * (num - len(services))
+
+    def to_sql(self):
+        return self.prof_id, self.name, self.gender, self.rating, self.reviews, *self.marks, self.url, \
+               *Profile.get_const_services(self.services, 3)
+
+    @staticmethod
+    def to_sql_column():
+        result = ["prof_id", "full_name", "gender",
+                  "rating", "reviews"]
+        result.extend(["mark_1", "mark_2", "mark_3", "mark_4", "mark_5"])
+        result.extend(["url"])
+        result.extend(["service_1", "service_2", "service_3"])
+        return tuple(result)
+
+    @staticmethod
+    def to_sql_values():
+        return ",".join("?" * len(Profile.to_sql_column()))
 
     @staticmethod
     def header(services=True, flatten=False) -> typing.Tuple[str, ...]:
@@ -228,11 +254,16 @@ def process_local_page(page: int,
     return len(files), fails_cnt
 
 
-def aggregate_main(pb_pages: tqdm.tqdm, counter: tqdm.tqdm):
+def aggregate_main(pb_pages: tqdm.tqdm, counter: tqdm.tqdm, conn=None):
     aggregate = os.path.join(DATA_DIR, AGGREGATE)
     pathlib.Path(aggregate).mkdir(parents=True, exist_ok=True)
     pbar = tqdm.tqdm(total=500, position=1)
-
+    if conn is not None:
+        cursor = conn.cursor()
+        columns = ",".join(Profile.to_sql_column())
+    else:
+        cursor = None
+        columns = ""
     with open(os.path.join(DATA_DIR, "full_data.csv"), "w") as full_data:
         writer = csv.writer(full_data, delimiter=",")
         writer.writerow(Profile.header(**FULL_CONFIG))
@@ -251,8 +282,14 @@ def aggregate_main(pb_pages: tqdm.tqdm, counter: tqdm.tqdm):
                             res_writer = csv.writer(result, delimiter=",")
                             res_writer.writerow(profile.to_list(**AGGREGATE_CONFIG))
                     writer.writerow(profile.to_list(**FULL_CONFIG))
+                    if cursor:
+                        # print(profile.to_sql())
+                        cursor.execute(f"insert into {config.table}({columns}) values ({Profile.to_sql_values()})",
+                                       *profile.to_sql())
                     counter.update(1)
                     pbar.update(1)
+            if conn is not None:
+                conn.commit()
             pb_pages.update(1)
     return
 
@@ -284,20 +321,13 @@ def parse_args():
     parser.add_argument("-s", "--store", default="data", help="Directory to store data")
     parser.add_argument("--pages", default=300, type=int, help="Number of pages to process")
     parser.add_argument("--start", default=1, type=int, help="Number of pages to process")
+    parser.add_argument("--upload", action="store_true", help="Upload data during aggregation phase")
+    parser.add_argument("--server", help="SQL Server server for uploading data")
+    parser.add_argument("--database", help="SQL Server database for uploading data")
+    parser.add_argument("--username", help="SQL Server username for uploading data")
+    parser.add_argument("--password", help="SQL Server password for uploading data")
+    parser.add_argument("--table", help="table for uploading data")
     return parser.parse_args()
-
-
-config = parse_args()
-print(config)
-
-THREADS = config.treads
-
-PROFILES_DIR = "profiles"
-AGGREGATE = "aggregate"
-DATA_DIR = config.store
-
-PAGES = config.pages
-START = config.start
 
 
 def wait_threads(threads):
@@ -328,8 +358,8 @@ def start_parse(pages_pb, counter):
     wait_threads(threads)
 
 
-def start_aggregate(pages_pb, counter):
-    aggregate_main(pages_pb, counter)
+def start_aggregate(pages_pb, counter, conn=None):
+    aggregate_main(pages_pb, counter, conn)
     storage = os.path.join(DATA_DIR, AGGREGATE)
     print("add headers")
     agg_files = os.listdir(storage)
@@ -352,10 +382,28 @@ def main():
         counter.clear()
 
     if "aggregate" in config.mode:
-        start_aggregate(pages_pb, counter)
+        conn = None
+        if config.upload:
+            connection_string = f"Driver={{ODBC Driver 17 for SQL Server}};Server={config.server};" \
+                                f"Database={config.database};uid={config.username};pwd={config.password}"
+            # print(connection_string)
+            conn = pyodbc.connect(connection_string)
+        start_aggregate(pages_pb, counter, conn)
         pages_pb.clear()
         counter.clear()
 
 
 if __name__ == '__main__':
+    config = parse_args()
+    print(config)
+
+    THREADS = config.treads
+
+    PROFILES_DIR = "profiles"
+    AGGREGATE = "0_aggregate"
+    DATA_DIR = config.store
+
+    PAGES = config.pages
+    START = config.start
+
     main()
